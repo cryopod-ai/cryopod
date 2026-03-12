@@ -1,0 +1,23 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.pytest_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv
+.env
+
+# Crypod
+*.pre-thaw
+
+# Claude
+.claude
+CLAUDE.md
+.cryopod.toml
+dispatch/*
+docs/*
