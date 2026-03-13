@@ -22,13 +22,23 @@ from cryopod.config import MalformedConfigError, load_config
     help="Additional ignore pattern (repeatable)",
 )
 @click.option(
+    "--max-versions",
+    type=click.IntRange(1, 100),
+    default=None,
+    help="Maximum number of versions to retain (1–100)",
+)
+@click.option(
     "--config",
     default=".cryopod.toml",
     type=click.Path(),
     help="Path to config file",
 )
 def add_command(
-    name: str, directory: str, ignore: tuple[str, ...], config: str
+    name: str,
+    directory: str,
+    ignore: tuple[str, ...],
+    max_versions: int | None,
+    config: str,
 ) -> None:
     """Add a new agent to the local Cryopod config."""
     config_path = Path(config).resolve()
@@ -58,10 +68,13 @@ def add_command(
     ignore_list = list(dict.fromkeys(ignore_list))
 
     # Add agent entry
-    data["agents"][name] = {
+    agent_entry: dict = {
         "directory": directory,
         "ignore": ignore_list,
     }
+    if max_versions is not None:
+        agent_entry["max_versions"] = max_versions
+    data["agents"][name] = agent_entry
 
     # Write config
     with open(config_path, "wb") as f:
