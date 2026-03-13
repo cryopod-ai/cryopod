@@ -14,14 +14,18 @@ from cryopod.formatting import format_size, format_timestamp
 console = Console()
 
 
-def _fetch_versions(name: str, api_key: str, base_url: str) -> list[dict]:
+def _fetch_versions(
+    name: str, api_key: str, base_url: str
+) -> tuple[list[dict], int | None]:
     """Fetch all versions for a pod with pagination.
 
-    Returns list of version dicts with fields: version, created_at,
-    file_size, source_type.
+    Returns a tuple of (items, max_versions) where items is a list of version
+    dicts with fields: version, created_at, file_size, source_type, and
+    max_versions is the retention limit from the API (or None if absent).
     """
     headers = {"Authorization": f"Bearer {api_key}"}
     all_items: list[dict] = []
+    max_versions: int | None = None
     page = 1
     page_size = 50
 
@@ -41,12 +45,15 @@ def _fetch_versions(name: str, api_key: str, base_url: str) -> list[dict]:
             count = data.get("count", 0)
             all_items.extend(items)
 
+            if page == 1:
+                max_versions = data.get("max_versions")
+
             if len(all_items) >= count:
                 break
 
             page += 1
 
-    return all_items
+    return all_items, max_versions
 
 
 @click.command()
@@ -58,7 +65,7 @@ def versions_command(name: str) -> None:
 
     # Step 2: Fetch versions
     base_url = API_BASE_URL
-    versions = _fetch_versions(name, api_key, base_url)
+    versions, max_versions = _fetch_versions(name, api_key, base_url)
 
     # Step 3: Handle empty result
     if not versions:
@@ -84,5 +91,9 @@ def versions_command(name: str) -> None:
         table.add_row(version_num, created, size, source)
 
     count = len(versions_sorted)
-    title = f"{name} \u2014 {count} version{'s' if count != 1 else ''}"
+    label = f"{count} version{'s' if count != 1 else ''}"
+    if max_versions is not None:
+        title = f"{name} \u2014 {label} (max: {max_versions})"
+    else:
+        title = f"{name} \u2014 {label}"
     console.print(Panel(table, box=HEAVY, title=title))

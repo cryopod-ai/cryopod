@@ -9,22 +9,33 @@ from cryopod.cli import cli
 from tests.helpers import make_mock_httpx_client
 
 
-def _mock_versions_response(versions: list[dict], count: int | None = None):
+def _mock_versions_response(
+    versions: list[dict],
+    count: int | None = None,
+    max_versions: int | None = None,
+):
     """Create a mock httpx.Client that returns versions from GET /api/pods/{name}/versions/."""
     if count is None:
         count = len(versions)
 
     mock_client, mock_context = make_mock_httpx_client()
 
+    resp_data = {"items": versions, "count": count}
+    if max_versions is not None:
+        resp_data["max_versions"] = max_versions
+
     resp = MagicMock()
     resp.status_code = 200
-    resp.json.return_value = {"items": versions, "count": count}
+    resp.json.return_value = resp_data
     mock_client.get.return_value = resp
 
     return mock_context
 
 
-def _mock_paginated_versions_response(pages: list[tuple[list[dict], int]]):
+def _mock_paginated_versions_response(
+    pages: list[tuple[list[dict], int]],
+    max_versions: int | None = None,
+):
     """Create a mock httpx.Client that returns versions across multiple pages.
 
     pages: list of (items, count) tuples, one per page.
@@ -33,9 +44,12 @@ def _mock_paginated_versions_response(pages: list[tuple[list[dict], int]]):
 
     responses = []
     for items, count in pages:
+        resp_data = {"items": items, "count": count}
+        if max_versions is not None:
+            resp_data["max_versions"] = max_versions
         resp = MagicMock()
         resp.status_code = 200
-        resp.json.return_value = {"items": items, "count": count}
+        resp.json.return_value = resp_data
         responses.append(resp)
 
     mock_client.get.side_effect = responses
@@ -355,3 +369,60 @@ class TestPagination:
         assert "2026-03-09 10:00" in result.output
         assert "2026-03-10 12:30" in result.output
         assert "2 versions" in result.output
+
+
+class TestMaxVersionsDisplay:
+    """Tests for max_versions display in panel title."""
+
+    def test_max_versions_shown_in_title(self, monkeypatch):
+        """Panel title includes max_versions when API provides it."""
+        monkeypatch.setenv("CRYOPOD_API_KEY", "test-key")
+
+        mock_ctx = _mock_versions_response(SAMPLE_VERSIONS, max_versions=20)
+
+        with patch("cryopod.versions.httpx.Client", return_value=mock_ctx):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["versions", "claude"])
+
+        assert result.exit_code == 0
+        assert "3 versions (max: 20)" in result.output
+
+    def test_max_versions_absent_graceful_fallback(self, monkeypatch):
+        """Panel title omits max info when API does not return max_versions."""
+        monkeypatch.setenv("CRYOPOD_API_KEY", "test-key")
+
+        mock_ctx = _mock_versions_response(SAMPLE_VERSIONS)
+
+        with patch("cryopod.versions.httpx.Client", return_value=mock_ctx):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["versions", "claude"])
+
+        assert result.exit_code == 0
+        assert "3 versions" in result.output
+        assert "(max:" not in result.output
+
+    def test_max_versions_with_single_version(self, monkeypatch):
+        """Singular 'version' label with max_versions present."""
+        monkeypatch.setenv("CRYOPOD_API_KEY", "test-key")
+
+        mock_ctx = _mock_versions_response([SAMPLE_VERSIONS[0]], max_versions=10)
+
+        with patch("cryopod.versions.httpx.Client", return_value=mock_ctx):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["versions", "claude"])
+
+        assert result.exit_code == 0
+        assert "1 version (max: 10)" in result.output
+
+    def test_max_versions_shown_in_title_boundary(self, monkeypatch):
+        """Boundary case: max_versions of 1."""
+        monkeypatch.setenv("CRYOPOD_API_KEY", "test-key")
+
+        mock_ctx = _mock_versions_response([SAMPLE_VERSIONS[0]], max_versions=1)
+
+        with patch("cryopod.versions.httpx.Client", return_value=mock_ctx):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["versions", "claude"])
+
+        assert result.exit_code == 0
+        assert "(max: 1)" in result.output
