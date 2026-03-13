@@ -84,7 +84,7 @@ cryopod thaw <agent> --version <N>
 
 ### `cryopod versions <agent>`
 
-Show all stored versions of a pod with version number, creation date, size, and source.
+Show all stored versions of a pod with version number, creation date, size, and source. The header displays `(max: N)` when a retention limit is configured for the pod.
 
 ### `cryopod restore <agent> <version>`
 
@@ -102,17 +102,17 @@ Show merged local and remote agent status. Displays which agents are configured 
 
 Show account info, quota usage, environment variable status, and local config state.
 
-### `cryopod add <name> --directory DIR [--ignore PATTERN]... [--config PATH]`
+### `cryopod add <name> --directory DIR [--ignore PATTERN]... [--max-versions N] [--config PATH]`
 
-Add a new agent to the local config. Global and known-agent ignore patterns are applied automatically. `--ignore` is repeatable.
+Add a new agent to the local config. Global and known-agent ignore patterns are applied automatically. `--ignore` is repeatable. `--max-versions` sets the maximum number of versions to retain for this agent (1–100). When omitted, the server default applies.
 
 ### `cryopod remove <name> [--config PATH]`
 
 Remove an agent from the local config.
 
-### `cryopod update <name> [--directory DIR] [--name NEW] [--ignore PATTERN]... [--config PATH]`
+### `cryopod update <name> [--directory DIR] [--name NEW] [--ignore PATTERN]... [--max-versions N] [--config PATH]`
 
-Update an existing agent's directory, ignore patterns, or name. At least one option is required.
+Update an existing agent's directory, ignore patterns, name, or version retention limit. At least one option is required. `--max-versions` works the same as in `add` (1–100).
 
 ### `cryopod purge <name> [--yes]`
 
@@ -130,6 +130,7 @@ Cryopod stores its project-level configuration in `.cryopod.toml`. Run `cryopod 
 [agents.claude]
 directory = ".claude"
 ignore = ["settings.local.json"]
+max_versions = 5
 
 [agents.codex]
 directory = ".codex"
@@ -139,6 +140,7 @@ ignore = []
 Each `[agents.<name>]` section defines:
 - `directory` — path to the agent's config directory (relative to the project root).
 - `ignore` — list of glob patterns for files to exclude from backup.
+- `max_versions` *(optional)* — maximum number of versions to retain on the server (1–100). When omitted, the server's default retention policy applies.
 
 ## Supported Agents
 

@@ -44,7 +44,8 @@ cryopod thaw --all
 ### Project Config
 
 Running `cryopod init` creates a `.cryopod.toml` file in the current directory.
-This file tracks which agents are configured for backup in the project.
+This file tracks which agents are configured for backup in the project. Per-agent
+`max_versions` can be set to control how many versions are retained on the server.
 
 ## Commands
 
