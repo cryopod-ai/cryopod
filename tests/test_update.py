@@ -343,6 +343,139 @@ class TestUpdateRename:
         assert "already exists" in result.output.lower()
 
 
+class TestUpdateMaxVersions:
+    """Tests for --max-versions flag."""
+
+    def test_max_versions_only(self, tmp_path, monkeypatch):
+        """Updates only max_versions, leaving other fields unchanged."""
+        monkeypatch.chdir(tmp_path)
+        runner = CliRunner()
+        runner.invoke(cli, ["add", "myagent", "--directory", "/some/path"])
+        config_before = read_toml(tmp_path / ".cryopod.toml")
+        old_dir = config_before["agents"]["myagent"]["directory"]
+        old_ignore = config_before["agents"]["myagent"]["ignore"]
+
+        result = runner.invoke(cli, ["update", "myagent", "--max-versions", "10"])
+
+        assert result.exit_code == 0
+        config = read_toml(tmp_path / ".cryopod.toml")
+        assert config["agents"]["myagent"]["max_versions"] == 10
+        assert config["agents"]["myagent"]["directory"] == old_dir
+        assert config["agents"]["myagent"]["ignore"] == old_ignore
+        assert "max_versions" in result.output
+
+    def test_max_versions_overwrites_existing(self, tmp_path, monkeypatch):
+        """Updating max_versions overwrites a previously set value."""
+        monkeypatch.chdir(tmp_path)
+        runner = CliRunner()
+        runner.invoke(
+            cli, ["add", "myagent", "--directory", "/path", "--max-versions", "5"]
+        )
+
+        result = runner.invoke(cli, ["update", "myagent", "--max-versions", "20"])
+
+        assert result.exit_code == 0
+        config = read_toml(tmp_path / ".cryopod.toml")
+        assert config["agents"]["myagent"]["max_versions"] == 20
+
+    def test_max_versions_with_directory(self, tmp_path, monkeypatch):
+        """Updating both --max-versions and --directory together works."""
+        monkeypatch.chdir(tmp_path)
+        runner = CliRunner()
+        runner.invoke(cli, ["add", "myagent", "--directory", "/old"])
+
+        result = runner.invoke(
+            cli,
+            ["update", "myagent", "--max-versions", "15", "--directory", "/new"],
+        )
+
+        assert result.exit_code == 0
+        config = read_toml(tmp_path / ".cryopod.toml")
+        assert config["agents"]["myagent"]["max_versions"] == 15
+        assert config["agents"]["myagent"]["directory"] == "/new"
+
+    def test_max_versions_with_rename(self, tmp_path, monkeypatch):
+        """Updating both --max-versions and --name together works."""
+        monkeypatch.chdir(tmp_path)
+        runner = CliRunner()
+        runner.invoke(cli, ["add", "oldname", "--directory", "/path"])
+
+        result = runner.invoke(
+            cli,
+            ["update", "oldname", "--max-versions", "7", "--name", "newname"],
+        )
+
+        assert result.exit_code == 0
+        config = read_toml(tmp_path / ".cryopod.toml")
+        assert "oldname" not in config["agents"]
+        assert config["agents"]["newname"]["max_versions"] == 7
+
+    def test_max_versions_rejects_zero(self, tmp_path, monkeypatch):
+        """--max-versions 0 is rejected by IntRange validation."""
+        monkeypatch.chdir(tmp_path)
+        runner = CliRunner()
+        runner.invoke(cli, ["add", "myagent", "--directory", "/path"])
+
+        result = runner.invoke(cli, ["update", "myagent", "--max-versions", "0"])
+
+        assert result.exit_code != 0
+
+    def test_max_versions_rejects_over_100(self, tmp_path, monkeypatch):
+        """--max-versions 101 is rejected by IntRange validation."""
+        monkeypatch.chdir(tmp_path)
+        runner = CliRunner()
+        runner.invoke(cli, ["add", "myagent", "--directory", "/path"])
+
+        result = runner.invoke(cli, ["update", "myagent", "--max-versions", "101"])
+
+        assert result.exit_code != 0
+
+    def test_max_versions_rejects_negative(self, tmp_path, monkeypatch):
+        """--max-versions -1 is rejected by IntRange validation."""
+        monkeypatch.chdir(tmp_path)
+        runner = CliRunner()
+        runner.invoke(cli, ["add", "myagent", "--directory", "/path"])
+
+        result = runner.invoke(cli, ["update", "myagent", "--max-versions", "-1"])
+
+        assert result.exit_code != 0
+
+    def test_max_versions_boundary_1(self, tmp_path, monkeypatch):
+        """--max-versions 1 is accepted (lower boundary)."""
+        monkeypatch.chdir(tmp_path)
+        runner = CliRunner()
+        runner.invoke(cli, ["add", "myagent", "--directory", "/path"])
+
+        result = runner.invoke(cli, ["update", "myagent", "--max-versions", "1"])
+
+        assert result.exit_code == 0
+        config = read_toml(tmp_path / ".cryopod.toml")
+        assert config["agents"]["myagent"]["max_versions"] == 1
+
+    def test_max_versions_boundary_100(self, tmp_path, monkeypatch):
+        """--max-versions 100 is accepted (upper boundary)."""
+        monkeypatch.chdir(tmp_path)
+        runner = CliRunner()
+        runner.invoke(cli, ["add", "myagent", "--directory", "/path"])
+
+        result = runner.invoke(cli, ["update", "myagent", "--max-versions", "100"])
+
+        assert result.exit_code == 0
+        config = read_toml(tmp_path / ".cryopod.toml")
+        assert config["agents"]["myagent"]["max_versions"] == 100
+
+    def test_max_versions_counts_as_change(self, tmp_path, monkeypatch):
+        """Passing only --max-versions does NOT trigger 'nothing to update'."""
+        monkeypatch.chdir(tmp_path)
+        runner = CliRunner()
+        runner.invoke(cli, ["add", "myagent", "--directory", "/path"])
+
+        result = runner.invoke(cli, ["update", "myagent", "--max-versions", "5"])
+
+        assert result.exit_code == 0
+        assert "nothing to update" not in result.output.lower()
+
+
 class TestUpdateMalformedConfig:
     """Tests for malformed config file."""
 

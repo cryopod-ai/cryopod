@@ -27,6 +27,12 @@ from cryopod.config import require_config
     help="Replace ignore patterns (repeatable)",
 )
 @click.option(
+    "--max-versions",
+    type=click.IntRange(1, 100),
+    default=None,
+    help="Maximum number of versions to retain (1–100)",
+)
+@click.option(
     "--config",
     default=".cryopod.toml",
     type=click.Path(),
@@ -36,6 +42,7 @@ def update_command(
     name: str,
     directory: str | None,
     ignore: tuple[str, ...],
+    max_versions: int | None,
     new_name: str | None,
     config: str,
 ) -> None:
@@ -47,9 +54,14 @@ def update_command(
     if name not in data.get("agents", {}):
         raise click.ClickException(f"Agent '{name}' not found in {config_path}.")
 
-    if directory is None and len(ignore) == 0 and new_name is None:
+    if (
+        directory is None
+        and len(ignore) == 0
+        and new_name is None
+        and max_versions is None
+    ):
         raise click.ClickException(
-            "Nothing to update. Provide --directory, --ignore, and/or --name."
+            "Nothing to update. Provide --directory, --ignore, --name, and/or --max-versions."
         )
 
     if new_name is not None:
@@ -71,6 +83,10 @@ def update_command(
     if len(ignore) > 0:
         data["agents"][name]["ignore"] = list(ignore)
         changed.append("ignore")
+
+    if max_versions is not None:
+        data["agents"][name]["max_versions"] = max_versions
+        changed.append("max_versions")
 
     if new_name is not None:
         data["agents"][new_name] = data["agents"].pop(name)
