@@ -7,12 +7,13 @@ def write_config(path: Path, agents: dict) -> None:
     """Write a .cryopod.toml config file."""
     import tomli_w
 
-    data = {
-        "agents": {
-            name: {"directory": info["directory"], "ignore": info.get("ignore", [])}
-            for name, info in agents.items()
-        }
-    }
+    entries = {}
+    for name, info in agents.items():
+        entry = {"directory": info["directory"], "ignore": info.get("ignore", [])}
+        if "max_versions" in info:
+            entry["max_versions"] = info["max_versions"]
+        entries[name] = entry
+    data = {"agents": entries}
     with open(path, "wb") as f:
         tomli_w.dump(data, f)
 

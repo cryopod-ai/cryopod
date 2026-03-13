@@ -50,7 +50,13 @@ def _build_archive(agent_dir: Path, ignore_patterns: list[str]) -> bytes:
     return buf.getvalue()
 
 
-def _upload_pod(name: str, archive: bytes, api_key: str, base_url: str) -> dict:
+def _upload_pod(
+    name: str,
+    archive: bytes,
+    api_key: str,
+    base_url: str,
+    max_versions: int | None = None,
+) -> dict:
     """Upload an archive to the Cryopod API.
 
     Step 1: POST to create pod (or PATCH on 409 conflict).
@@ -60,6 +66,8 @@ def _upload_pod(name: str, archive: bytes, api_key: str, base_url: str) -> dict:
     """
     headers = {"Authorization": f"Bearer {api_key}"}
     payload = {"name": name, "file_size": len(archive)}
+    if max_versions is not None:
+        payload["max_versions"] = max_versions
 
     with httpx.Client(timeout=60) as client:
         # Step 1: Create or update pod
@@ -67,9 +75,12 @@ def _upload_pod(name: str, archive: bytes, api_key: str, base_url: str) -> dict:
 
         if resp.status_code == 409:
             # Pod already exists, update it
+            patch_payload = {"file_size": len(archive)}
+            if max_versions is not None:
+                patch_payload["max_versions"] = max_versions
             resp = client.patch(
                 f"{base_url}/api/pods/{name}/",
-                json={"file_size": len(archive)},
+                json=patch_payload,
                 headers=headers,
             )
 
@@ -134,8 +145,10 @@ def _freeze_one(
         with console.status(f"\u25b8 ENCRYPTING {name}...", spinner="dots2"):
             archive = encrypt_archive(archive, secret_key)
 
+    max_versions = agent_conf.get("max_versions")
+
     with console.status(f"\u25b8 UPLOADING {name}...", spinner="dots2"), api_errors():
-        data = _upload_pod(name, archive, api_key, base_url)
+        data = _upload_pod(name, archive, api_key, base_url, max_versions=max_versions)
 
     version = data.get("version")
     size_str = format_size(len(archive))
