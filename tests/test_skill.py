@@ -139,3 +139,31 @@ class TestSkillCommand:
         result = runner.invoke(cli, ["skill"])
 
         assert "`--version` is mutually exclusive with `--all`" in result.output
+
+    def test_skill_documents_max_versions_flag(self):
+        """Output documents the --max-versions flag."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["skill"])
+
+        assert "--max-versions" in result.output
+
+    def test_skill_documents_max_versions_range(self):
+        """Output documents the valid range 1–100."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["skill"])
+
+        assert "1–100" in result.output
+
+    def test_skill_documents_max_versions_in_config(self):
+        """Output documents max_versions in the Configuration section."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["skill"])
+
+        assert "max_versions" in result.output
+
+    def test_skill_documents_versions_max_display(self):
+        """Output mentions the (max: N) display in versions output."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["skill"])
+
+        assert "(max: N)" in result.output

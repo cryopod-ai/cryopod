@@ -343,6 +343,35 @@ class TestUpdateRename:
         assert "already exists" in result.output.lower()
 
 
+class TestUpdateMaxVersions:
+    """Tests for --max-versions option."""
+
+    def test_max_versions_writes_to_config(self, tmp_path, monkeypatch):
+        """--max-versions 5 writes max_versions = 5 to the agent's config entry."""
+        monkeypatch.chdir(tmp_path)
+
+        runner = CliRunner()
+        runner.invoke(cli, ["add", "myagent", "--directory", "/path"])
+        result = runner.invoke(cli, ["update", "myagent", "--max-versions", "5"])
+
+        assert result.exit_code == 0
+        config = read_toml(tmp_path / ".cryopod.toml")
+        assert config["agents"]["myagent"]["max_versions"] == 5
+
+    def test_max_versions_out_of_range_rejected(self, tmp_path, monkeypatch):
+        """--max-versions with an out-of-range value is rejected by Click."""
+        monkeypatch.chdir(tmp_path)
+
+        runner = CliRunner()
+        runner.invoke(cli, ["add", "myagent", "--directory", "/path"])
+
+        result_zero = runner.invoke(cli, ["update", "myagent", "--max-versions", "0"])
+        assert result_zero.exit_code != 0
+
+        result_over = runner.invoke(cli, ["update", "myagent", "--max-versions", "101"])
+        assert result_over.exit_code != 0
+
+
 class TestUpdateMalformedConfig:
     """Tests for malformed config file."""
 
