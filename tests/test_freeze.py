@@ -848,7 +848,7 @@ class TestCredentialIgnore:
 
         uploaded_bytes = None
 
-        def capture_upload(name, archive, api_key, base_url):
+        def capture_upload(name, archive, api_key, base_url, max_versions=None):
             nonlocal uploaded_bytes
             uploaded_bytes = archive
             return {"version": 1}
@@ -863,6 +863,176 @@ class TestCredentialIgnore:
         assert "config.json" in names
         assert ".env" not in names
         assert "credentials.json" not in names
+
+
+class TestMaxVersions:
+    """Tests for max_versions being sent in API payloads."""
+
+    def test_max_versions_sent_in_post(self, tmp_path, monkeypatch):
+        """POST payload includes max_versions when configured."""
+        agent_dir = tmp_path / ".claude"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text("{}")
+
+        write_config(
+            tmp_path / ".cryopod.toml",
+            {"claude": {"directory": str(agent_dir), "max_versions": 5}},
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("CRYOPOD_API_KEY", "test-key")
+        monkeypatch.delenv("CRYOPOD_SECRET_KEY", raising=False)
+
+        mock_client, mock_context = make_mock_httpx_client()
+
+        post_resp = MagicMock()
+        post_resp.status_code = 201
+        post_resp.json.return_value = {
+            "upload_url": "https://storage.example.com/upload/presigned",
+            "version": 1,
+        }
+        mock_client.post.return_value = post_resp
+
+        put_resp = MagicMock()
+        put_resp.status_code = 200
+        mock_client.put.return_value = put_resp
+
+        with patch("cryopod.freeze.httpx.Client", return_value=mock_context):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["freeze", "claude"])
+
+        assert result.exit_code == 0
+        post_call = mock_client.post.call_args
+        payload = post_call.kwargs.get("json", post_call[1].get("json"))
+        assert payload["max_versions"] == 5
+        assert payload["name"] == "claude"
+
+    def test_max_versions_sent_in_patch_on_409(self, tmp_path, monkeypatch):
+        """PATCH payload includes max_versions on 409 conflict."""
+        agent_dir = tmp_path / ".claude"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text("{}")
+
+        write_config(
+            tmp_path / ".cryopod.toml",
+            {"claude": {"directory": str(agent_dir), "max_versions": 5}},
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("CRYOPOD_API_KEY", "test-key")
+        monkeypatch.delenv("CRYOPOD_SECRET_KEY", raising=False)
+
+        mock_client, mock_context = make_mock_httpx_client()
+
+        # POST returns 409
+        post_resp = MagicMock()
+        post_resp.status_code = 409
+        mock_client.post.return_value = post_resp
+
+        # PATCH returns 200
+        patch_resp = MagicMock()
+        patch_resp.status_code = 200
+        patch_resp.json.return_value = {
+            "upload_url": "https://storage.example.com/upload/presigned",
+            "version": 2,
+        }
+        mock_client.patch.return_value = patch_resp
+
+        put_resp = MagicMock()
+        put_resp.status_code = 200
+        mock_client.put.return_value = put_resp
+
+        with patch("cryopod.freeze.httpx.Client", return_value=mock_context):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["freeze", "claude"])
+
+        assert result.exit_code == 0
+        patch_call = mock_client.patch.call_args
+        payload = patch_call.kwargs.get("json", patch_call[1].get("json"))
+        assert payload["max_versions"] == 5
+
+    def test_max_versions_omitted_when_absent(self, tmp_path, monkeypatch):
+        """POST payload does not contain max_versions when not configured."""
+        agent_dir = tmp_path / ".claude"
+        agent_dir.mkdir()
+        (agent_dir / "config.json").write_text("{}")
+
+        write_config(
+            tmp_path / ".cryopod.toml",
+            {"claude": {"directory": str(agent_dir)}},
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("CRYOPOD_API_KEY", "test-key")
+        monkeypatch.delenv("CRYOPOD_SECRET_KEY", raising=False)
+
+        mock_client, mock_context = make_mock_httpx_client()
+
+        post_resp = MagicMock()
+        post_resp.status_code = 201
+        post_resp.json.return_value = {
+            "upload_url": "https://storage.example.com/upload/presigned",
+            "version": 1,
+        }
+        mock_client.post.return_value = post_resp
+
+        put_resp = MagicMock()
+        put_resp.status_code = 200
+        mock_client.put.return_value = put_resp
+
+        with patch("cryopod.freeze.httpx.Client", return_value=mock_context):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["freeze", "claude"])
+
+        assert result.exit_code == 0
+        post_call = mock_client.post.call_args
+        payload = post_call.kwargs.get("json", post_call[1].get("json"))
+        assert "max_versions" not in payload
+
+    def test_max_versions_sent_with_freeze_all(self, tmp_path, monkeypatch):
+        """--all sends max_versions only for agents that have it configured."""
+        for name in ("claude", "codex"):
+            agent_dir = tmp_path / f".{name}"
+            agent_dir.mkdir()
+            (agent_dir / "config.json").write_text("{}")
+
+        write_config(
+            tmp_path / ".cryopod.toml",
+            {
+                "claude": {"directory": str(tmp_path / ".claude"), "max_versions": 3},
+                "codex": {"directory": str(tmp_path / ".codex")},
+            },
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("CRYOPOD_API_KEY", "test-key")
+        monkeypatch.delenv("CRYOPOD_SECRET_KEY", raising=False)
+
+        mock_client, mock_context = make_mock_httpx_client()
+
+        post_resp = MagicMock()
+        post_resp.status_code = 201
+        post_resp.json.return_value = {
+            "upload_url": "https://storage.example.com/upload/presigned",
+            "version": 1,
+        }
+        mock_client.post.return_value = post_resp
+
+        put_resp = MagicMock()
+        put_resp.status_code = 200
+        mock_client.put.return_value = put_resp
+
+        with patch("cryopod.freeze.httpx.Client", return_value=mock_context):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["freeze", "--all"])
+
+        assert result.exit_code == 0
+        # Check the two POST calls
+        post_calls = mock_client.post.call_args_list
+        assert len(post_calls) == 2
+        payloads = {}
+        for call in post_calls:
+            payload = call.kwargs.get("json", call[1].get("json"))
+            payloads[payload["name"]] = payload
+
+        assert payloads["claude"]["max_versions"] == 3
+        assert "max_versions" not in payloads["codex"]
 
 
 class TestBuildIgnoreIncludesCredentials:
