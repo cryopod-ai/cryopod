@@ -11,12 +11,25 @@ from rich.console import Console
 
 from cryopod.agents import KNOWN_AGENTS
 from cryopod.api import api_errors, raise_for_status
-from cryopod.config import API_BASE_URL, get_secret_key, load_config, require_api_key
+from cryopod.config import (
+    API_BASE_URL,
+    ensure_agent_in_config,
+    get_secret_key,
+    load_config,
+    require_api_key,
+)
 from cryopod.crypto import decrypt_archive, is_encrypted
 from cryopod.formatting import format_size
 from cryopod.manifest import _fetch_all_pods
 
 console = Console()
+
+
+def _auto_register(config_path: Path, name: str, directory: str) -> None:
+    """Register an agent in .cryopod.toml after a successful thaw."""
+    added = ensure_agent_in_config(config_path, name, directory)
+    if added:
+        console.print(f"[dim]▸ Registered {name} in {config_path.name}[/dim]")
 
 
 def _download_pod(
@@ -204,6 +217,7 @@ def thaw_command(
                 _thaw_one(
                     name, agent_conf, api_key, base_url, console, config_dir, no_backup
                 )
+                _auto_register(config_path, name, agent_conf.get("directory", ""))
         else:
             if agent_name in agents:
                 agent_conf = agents[agent_name]
@@ -225,6 +239,7 @@ def thaw_command(
                 no_backup,
                 version=pod_version,
             )
+            _auto_register(config_path, agent_name, agent_conf.get("directory", ""))
     else:
         # No config file — fall back to known agent defaults
         config_dir = Path.cwd()
@@ -256,6 +271,7 @@ def thaw_command(
                 _thaw_one(
                     name, agent_conf, api_key, base_url, console, config_dir, no_backup
                 )
+                _auto_register(config_path, name, agent_conf["directory"])
         else:
             if agent_name in KNOWN_AGENTS:
                 agent_conf = {"directory": KNOWN_AGENTS[agent_name]["directory"]}
@@ -278,3 +294,4 @@ def thaw_command(
                 no_backup,
                 version=pod_version,
             )
+            _auto_register(config_path, agent_name, agent_conf["directory"])

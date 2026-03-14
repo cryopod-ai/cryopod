@@ -5,11 +5,13 @@ import tarfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import click
 from click.testing import CliRunner
 
+from cryopod.agents import _build_ignore
 from cryopod.cli import cli
 from cryopod.crypto import encrypt_archive
-from tests.helpers import make_mock_httpx_client, write_config
+from tests.helpers import make_mock_httpx_client, read_toml, write_config
 
 
 def _build_tar_gz(files: dict[str, str]) -> bytes:
@@ -931,6 +933,11 @@ class TestThawWithoutConfig:
 
                 shutil.rmtree(agent_dir)
 
+            # Remove config file created by auto-register in previous iteration
+            config_file = tmp_path / ".cryopod.toml"
+            if config_file.exists():
+                config_file.unlink()
+
             monkeypatch.chdir(tmp_path)
             monkeypatch.setenv("CRYOPOD_API_KEY", "test-key")
             monkeypatch.delenv("CRYOPOD_SECRET_KEY", raising=False)
@@ -1092,3 +1099,179 @@ class TestThawDirectory:
         assert result.exit_code == 0
         assert target.exists()
         assert (target / "config.json").exists()
+
+
+class TestThawAutoRegister:
+    """Tests for auto-registering thawed agents in .cryopod.toml."""
+
+    def test_thaw_creates_config_file(self, tmp_path, monkeypatch):
+        """No .cryopod.toml exists → thaw succeeds → file is created."""
+        archive = _build_tar_gz({"config.json": '{"key": "value"}'})
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("CRYOPOD_API_KEY", "test-key")
+        monkeypatch.delenv("CRYOPOD_SECRET_KEY", raising=False)
+
+        mock_ctx = _mock_successful_download(archive)
+
+        with patch("cryopod.thaw.httpx.Client", return_value=mock_ctx):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["thaw", "claude"])
+
+        assert result.exit_code == 0
+        config_path = tmp_path / ".cryopod.toml"
+        assert config_path.exists()
+        data = read_toml(config_path)
+        assert "claude" in data["agents"]
+        assert data["agents"]["claude"]["directory"] == ".claude"
+
+    def test_thaw_registers_with_correct_ignore_list(self, tmp_path, monkeypatch):
+        """Registered agent has ignore list matching _build_ignore output."""
+        archive = _build_tar_gz({"config.json": '{"key": "value"}'})
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("CRYOPOD_API_KEY", "test-key")
+        monkeypatch.delenv("CRYOPOD_SECRET_KEY", raising=False)
+
+        mock_ctx = _mock_successful_download(archive)
+
+        with patch("cryopod.thaw.httpx.Client", return_value=mock_ctx):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["thaw", "claude"])
+
+        assert result.exit_code == 0
+        data = read_toml(tmp_path / ".cryopod.toml")
+        expected_ignore = list(dict.fromkeys(_build_ignore("claude")))
+        assert data["agents"]["claude"]["ignore"] == expected_ignore
+
+    def test_thaw_existing_agent_unchanged(self, tmp_path, monkeypatch):
+        """Agent already in config with custom settings → thaw → config unchanged."""
+        archive = _build_tar_gz({"config.json": '{"key": "value"}'})
+
+        write_config(
+            tmp_path / ".cryopod.toml",
+            {
+                "claude": {
+                    "directory": str(tmp_path / ".claude"),
+                    "ignore": ["custom-pattern"],
+                    "max_versions": 5,
+                }
+            },
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("CRYOPOD_API_KEY", "test-key")
+        monkeypatch.delenv("CRYOPOD_SECRET_KEY", raising=False)
+
+        mock_ctx = _mock_successful_download(archive)
+
+        with patch("cryopod.thaw.httpx.Client", return_value=mock_ctx):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["thaw", "claude"])
+
+        assert result.exit_code == 0
+        data = read_toml(tmp_path / ".cryopod.toml")
+        assert data["agents"]["claude"]["ignore"] == ["custom-pattern"]
+        assert data["agents"]["claude"]["max_versions"] == 5
+
+    def test_thaw_does_not_register_on_failure(self, tmp_path, monkeypatch):
+        """Mock _thaw_one to raise → verify no config changes."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("CRYOPOD_API_KEY", "test-key")
+        monkeypatch.delenv("CRYOPOD_SECRET_KEY", raising=False)
+
+        with patch(
+            "cryopod.thaw._thaw_one",
+            side_effect=click.ClickException("download failed"),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["thaw", "claude"])
+
+        assert result.exit_code != 0
+        assert not (tmp_path / ".cryopod.toml").exists()
+
+    def test_thaw_all_registers_all_agents(self, tmp_path, monkeypatch):
+        """--all without config → verify all thawed agents are registered."""
+        archive_claude = _build_tar_gz({"claude.json": "{}"})
+        archive_codex = _build_tar_gz({"codex.json": "{}"})
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("CRYOPOD_API_KEY", "test-key")
+        monkeypatch.delenv("CRYOPOD_SECRET_KEY", raising=False)
+
+        mock_pods = [{"name": "claude"}, {"name": "codex"}]
+
+        mock_client, mock_context = make_mock_httpx_client()
+
+        api_resp_1 = MagicMock()
+        api_resp_1.status_code = 200
+        api_resp_1.json.return_value = {
+            "download_url": "https://storage.example.com/dl/claude"
+        }
+        dl_resp_1 = MagicMock()
+        dl_resp_1.status_code = 200
+        dl_resp_1.content = archive_claude
+
+        api_resp_2 = MagicMock()
+        api_resp_2.status_code = 200
+        api_resp_2.json.return_value = {
+            "download_url": "https://storage.example.com/dl/codex"
+        }
+        dl_resp_2 = MagicMock()
+        dl_resp_2.status_code = 200
+        dl_resp_2.content = archive_codex
+
+        mock_client.get.side_effect = [api_resp_1, dl_resp_1, api_resp_2, dl_resp_2]
+
+        with (
+            patch("cryopod.thaw._fetch_all_pods", return_value=mock_pods),
+            patch("cryopod.thaw.httpx.Client", return_value=mock_context),
+        ):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["thaw", "--all"])
+
+        assert result.exit_code == 0
+        config_path = tmp_path / ".cryopod.toml"
+        assert config_path.exists()
+        data = read_toml(config_path)
+        assert "claude" in data["agents"]
+        assert "codex" in data["agents"]
+        assert data["agents"]["claude"]["directory"] == ".claude"
+        assert data["agents"]["codex"]["directory"] == ".codex"
+
+    def test_thaw_directory_override_registered(self, tmp_path, monkeypatch):
+        """Thaw with --directory → verify the override directory is stored."""
+        archive = _build_tar_gz({"config.json": '{"key": "value"}'})
+        target = tmp_path / "custom-dir"
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("CRYOPOD_API_KEY", "test-key")
+        monkeypatch.delenv("CRYOPOD_SECRET_KEY", raising=False)
+
+        mock_ctx = _mock_successful_download(archive)
+
+        with patch("cryopod.thaw.httpx.Client", return_value=mock_ctx):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["thaw", "claude", "--directory", str(target)])
+
+        assert result.exit_code == 0
+        config_path = tmp_path / ".cryopod.toml"
+        assert config_path.exists()
+        data = read_toml(config_path)
+        assert data["agents"]["claude"]["directory"] == str(target)
+
+    def test_thaw_registered_message_shown(self, tmp_path, monkeypatch):
+        """Registered message is shown when agent is newly added to config."""
+        archive = _build_tar_gz({"config.json": '{"key": "value"}'})
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("CRYOPOD_API_KEY", "test-key")
+        monkeypatch.delenv("CRYOPOD_SECRET_KEY", raising=False)
+
+        mock_ctx = _mock_successful_download(archive)
+
+        with patch("cryopod.thaw.httpx.Client", return_value=mock_ctx):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["thaw", "claude"])
+
+        assert result.exit_code == 0
+        assert "Registered claude" in result.output
