@@ -150,12 +150,19 @@ def _thaw_one(
     default=None,
     help="Thaw a specific version of the pod",
 )
+@click.option(
+    "--directory",
+    type=click.Path(),
+    default=None,
+    help="Target directory for extraction (overrides config/defaults)",
+)
 def thaw_command(
     agent_name: str | None,
     thaw_all: bool,
     config: str,
     no_backup: bool,
     pod_version: int | None,
+    directory: str | None,
 ) -> None:
     """Download and restore agent configs from Cryopod."""
     # Validate mutual exclusivity
@@ -163,6 +170,11 @@ def thaw_command(
         raise click.ClickException("Provide either an agent name or --all, not both.")
     if not agent_name and not thaw_all:
         raise click.ClickException("Provide an agent name or use --all.")
+
+    if directory is not None and thaw_all:
+        raise click.ClickException(
+            "Cannot specify --directory with --all. Thaw a specific agent instead."
+        )
 
     if pod_version is not None and thaw_all:
         raise click.ClickException(
@@ -193,13 +205,19 @@ def thaw_command(
                     name, agent_conf, api_key, base_url, console, config_dir, no_backup
                 )
         else:
-            if agent_name not in agents:
+            if agent_name in agents:
+                agent_conf = agents[agent_name]
+                if directory is not None:
+                    agent_conf = {**agent_conf, "directory": directory}
+            elif directory is not None:
+                agent_conf = {"directory": directory}
+            else:
                 raise click.ClickException(
                     f"Agent '{agent_name}' not found in .cryopod.toml."
                 )
             _thaw_one(
                 agent_name,
-                agents[agent_name],
+                agent_conf,
                 api_key,
                 base_url,
                 console,
@@ -239,12 +257,17 @@ def thaw_command(
                     name, agent_conf, api_key, base_url, console, config_dir, no_backup
                 )
         else:
-            if agent_name not in KNOWN_AGENTS:
+            if agent_name in KNOWN_AGENTS:
+                agent_conf = {"directory": KNOWN_AGENTS[agent_name]["directory"]}
+                if directory is not None:
+                    agent_conf["directory"] = directory
+            elif directory is not None:
+                agent_conf = {"directory": directory}
+            else:
                 raise click.ClickException(
-                    f"Unknown agent '{agent_name}'. Without a .cryopod.toml, "
-                    f"only known agents are supported: {', '.join(sorted(KNOWN_AGENTS))}."
+                    f"Unknown agent '{agent_name}'. Supply --directory <path> "
+                    f"or create a .cryopod.toml with a directory for this agent."
                 )
-            agent_conf = {"directory": KNOWN_AGENTS[agent_name]["directory"]}
             _thaw_one(
                 agent_name,
                 agent_conf,

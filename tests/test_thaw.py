@@ -790,6 +790,7 @@ class TestThawWithoutConfig:
         assert result.exit_code != 0
         assert "Unknown agent" in result.output
         assert "my-custom-agent" in result.output
+        assert "--directory" in result.output
 
     def test_all_without_config_known_agents(self, tmp_path, monkeypatch):
         """--all without config thaws known agents from manifest."""
@@ -944,3 +945,150 @@ class TestThawWithoutConfig:
             assert (tmp_path / expected_dir / "test.json").exists(), (
                 f"{agent_name} should extract to {expected_dir}"
             )
+
+
+class TestThawDirectory:
+    """Tests for --directory flag."""
+
+    def test_directory_unknown_agent_no_config(self, tmp_path, monkeypatch):
+        """Thaw unknown agent with --directory and no config file."""
+        archive = _build_tar_gz({"config.json": '{"key": "value"}'})
+        target = tmp_path / "my-custom-dir"
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("CRYOPOD_API_KEY", "test-key")
+        monkeypatch.delenv("CRYOPOD_SECRET_KEY", raising=False)
+
+        mock_ctx = _mock_successful_download(archive)
+
+        with patch("cryopod.thaw.httpx.Client", return_value=mock_ctx):
+            runner = CliRunner()
+            result = runner.invoke(
+                cli, ["thaw", "my-custom-agent", "--directory", str(target)]
+            )
+
+        assert result.exit_code == 0
+        assert "THAWED my-custom-agent" in result.output
+        assert (target / "config.json").exists()
+
+    def test_directory_unknown_agent_with_config(self, tmp_path, monkeypatch):
+        """Thaw unknown agent (not in config) with --directory."""
+        archive = _build_tar_gz({"config.json": '{"key": "value"}'})
+        target = tmp_path / "custom-output"
+
+        write_config(
+            tmp_path / ".cryopod.toml",
+            {"claude": {"directory": ".claude"}},
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("CRYOPOD_API_KEY", "test-key")
+        monkeypatch.delenv("CRYOPOD_SECRET_KEY", raising=False)
+
+        mock_ctx = _mock_successful_download(archive)
+
+        with patch("cryopod.thaw.httpx.Client", return_value=mock_ctx):
+            runner = CliRunner()
+            result = runner.invoke(
+                cli, ["thaw", "my-custom-agent", "--directory", str(target)]
+            )
+
+        assert result.exit_code == 0
+        assert "THAWED my-custom-agent" in result.output
+        assert (target / "config.json").exists()
+
+    def test_directory_known_agent_override(self, tmp_path, monkeypatch):
+        """--directory overrides the default directory for a known agent."""
+        archive = _build_tar_gz({"config.json": '{"key": "value"}'})
+        target = tmp_path / "override-dir"
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("CRYOPOD_API_KEY", "test-key")
+        monkeypatch.delenv("CRYOPOD_SECRET_KEY", raising=False)
+
+        mock_ctx = _mock_successful_download(archive)
+
+        with patch("cryopod.thaw.httpx.Client", return_value=mock_ctx):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["thaw", "claude", "--directory", str(target)])
+
+        assert result.exit_code == 0
+        assert "THAWED claude" in result.output
+        assert (target / "config.json").exists()
+        # Should NOT go to the default directory
+        assert not (tmp_path / ".claude").exists()
+
+    def test_directory_config_agent_override(self, tmp_path, monkeypatch):
+        """--directory overrides the config directory for a config-present agent."""
+        archive = _build_tar_gz({"config.json": '{"key": "value"}'})
+        config_dir = tmp_path / ".claude"
+        target = tmp_path / "override-dir"
+
+        write_config(
+            tmp_path / ".cryopod.toml",
+            {"claude": {"directory": str(config_dir)}},
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("CRYOPOD_API_KEY", "test-key")
+        monkeypatch.delenv("CRYOPOD_SECRET_KEY", raising=False)
+
+        mock_ctx = _mock_successful_download(archive)
+
+        with patch("cryopod.thaw.httpx.Client", return_value=mock_ctx):
+            runner = CliRunner()
+            result = runner.invoke(cli, ["thaw", "claude", "--directory", str(target)])
+
+        assert result.exit_code == 0
+        assert "THAWED claude" in result.output
+        assert (target / "config.json").exists()
+        # Should NOT go to the config directory
+        assert not config_dir.exists()
+
+    def test_directory_with_all_error(self, tmp_path, monkeypatch):
+        """--directory + --all produces a clear error."""
+        write_config(
+            tmp_path / ".cryopod.toml",
+            {"claude": {"directory": ".claude"}},
+        )
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("CRYOPOD_API_KEY", "test-key")
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli, ["thaw", "--all", "--directory", str(tmp_path / "out")]
+        )
+
+        assert result.exit_code != 0
+        assert "Cannot specify --directory with --all" in result.output
+
+    def test_unknown_agent_no_directory_error_message(self, tmp_path, monkeypatch):
+        """Unknown agent without --directory shows error mentioning --directory."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("CRYOPOD_API_KEY", "test-key")
+
+        runner = CliRunner()
+        result = runner.invoke(cli, ["thaw", "my-custom-agent"])
+
+        assert result.exit_code != 0
+        assert "--directory" in result.output
+        assert "my-custom-agent" in result.output
+
+    def test_directory_creates_path(self, tmp_path, monkeypatch):
+        """--directory pointing to a non-existent path creates it."""
+        archive = _build_tar_gz({"config.json": '{"key": "value"}'})
+        target = tmp_path / "deep" / "nested" / "dir"
+
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("CRYOPOD_API_KEY", "test-key")
+        monkeypatch.delenv("CRYOPOD_SECRET_KEY", raising=False)
+
+        mock_ctx = _mock_successful_download(archive)
+
+        with patch("cryopod.thaw.httpx.Client", return_value=mock_ctx):
+            runner = CliRunner()
+            result = runner.invoke(
+                cli, ["thaw", "my-custom-agent", "--directory", str(target)]
+            )
+
+        assert result.exit_code == 0
+        assert target.exists()
+        assert (target / "config.json").exists()
