@@ -9,10 +9,12 @@ import click
 import httpx
 from rich.console import Console
 
+from cryopod.agents import KNOWN_AGENTS
 from cryopod.api import api_errors, raise_for_status
-from cryopod.config import API_BASE_URL, get_secret_key, require_api_key, require_config
+from cryopod.config import API_BASE_URL, get_secret_key, load_config, require_api_key
 from cryopod.crypto import decrypt_archive, is_encrypted
 from cryopod.formatting import format_size
+from cryopod.manifest import _fetch_all_pods
 
 console = Console()
 
@@ -172,34 +174,84 @@ def thaw_command(
     # Check API key first
     api_key = require_api_key()
 
-    # Load config
+    # Load config (may be None if no .cryopod.toml exists)
     config_path = Path(config).resolve()
-    cfg = require_config(config_path)
-    agents = cfg.get("agents", {})
-
-    if not agents:
-        raise click.ClickException("No agents configured in .cryopod.toml.")
-
+    cfg = load_config(config_path)
     base_url = API_BASE_URL
-    config_dir = config_path.parent
 
-    if thaw_all:
-        for name, agent_conf in agents.items():
+    if cfg is not None:
+        # Config-based path (existing behavior)
+        agents = cfg.get("agents", {})
+        if not agents:
+            raise click.ClickException("No agents configured in .cryopod.toml.")
+
+        config_dir = config_path.parent
+
+        if thaw_all:
+            for name, agent_conf in agents.items():
+                _thaw_one(
+                    name, agent_conf, api_key, base_url, console, config_dir, no_backup
+                )
+        else:
+            if agent_name not in agents:
+                raise click.ClickException(
+                    f"Agent '{agent_name}' not found in .cryopod.toml."
+                )
             _thaw_one(
-                name, agent_conf, api_key, base_url, console, config_dir, no_backup
+                agent_name,
+                agents[agent_name],
+                api_key,
+                base_url,
+                console,
+                config_dir,
+                no_backup,
+                version=pod_version,
             )
     else:
-        if agent_name not in agents:
-            raise click.ClickException(
-                f"Agent '{agent_name}' not found in .cryopod.toml."
+        # No config file — fall back to known agent defaults
+        config_dir = Path.cwd()
+
+        if thaw_all:
+            pods = _fetch_all_pods(api_key, base_url)
+            if not pods:
+                raise click.ClickException("No pods found on the server.")
+
+            known = []
+            for pod in pods:
+                name = pod["name"]
+                if name in KNOWN_AGENTS:
+                    known.append(name)
+                else:
+                    console.print(
+                        f"[yellow]Skipping unknown agent '{name}' — not in known "
+                        f"agents list. Use a .cryopod.toml to thaw custom agents.[/yellow]"
+                    )
+
+            if not known:
+                raise click.ClickException(
+                    "No known agents found in remote pods. "
+                    "Use a .cryopod.toml to thaw custom agents."
+                )
+
+            for name in known:
+                agent_conf = {"directory": KNOWN_AGENTS[name]["directory"]}
+                _thaw_one(
+                    name, agent_conf, api_key, base_url, console, config_dir, no_backup
+                )
+        else:
+            if agent_name not in KNOWN_AGENTS:
+                raise click.ClickException(
+                    f"Unknown agent '{agent_name}'. Without a .cryopod.toml, "
+                    f"only known agents are supported: {', '.join(sorted(KNOWN_AGENTS))}."
+                )
+            agent_conf = {"directory": KNOWN_AGENTS[agent_name]["directory"]}
+            _thaw_one(
+                agent_name,
+                agent_conf,
+                api_key,
+                base_url,
+                console,
+                config_dir,
+                no_backup,
+                version=pod_version,
             )
-        _thaw_one(
-            agent_name,
-            agents[agent_name],
-            api_key,
-            base_url,
-            console,
-            config_dir,
-            no_backup,
-            version=pod_version,
-        )
